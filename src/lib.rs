@@ -1,17 +1,22 @@
+#![forbid(unsafe_code)]
+#![deny(future_incompatible)]
+#![warn(
+    missing_debug_implementations,
+    rust_2018_idioms,
+    trivial_casts,
+    unused_qualifications
+)]
+
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-/// When we rebalance, we leave a little room to grow so we don't thrash.
-const SIZE_PAD: usize = 16;
-/// The replica count also gets some padding.
-const REPLICAS_PAD: usize = 8;
-
 /// Things that we can store in the ring must have an ID string they advertise.
-pub trait HasId {
+pub trait HasId: std::fmt::Debug {
     fn id(&self) -> &str;
 }
 
 trait HashRing {
+    /// This type represents the resources we are distributing around the hash ring.
     type A;
 
     /// Add a new resource to the hash ring. Stores replica keys distributed around the ring.
@@ -28,32 +33,24 @@ trait HashRing {
 }
 
 /// A consistent hash ring with blue glowing lights.
+#[derive(Debug)]
 pub struct LightCycle {
     /// The number of replicas of each resource to insert into the ring. Ring size = replicas * entries.
     replicas: usize,
-    /// The number of resources we expect to manage. Helps us decide when to trigger a rebalance.
-    size: usize,
     /// The resources we're tracking.
     resources: HashMap<String, Box<dyn HasId>>,
     /// The consistent hash ring itself: each entry points to a key in the resource map.
     hashring: BTreeMap<String, String>,
-    /// Each resource has a key per replica. We track those so we can clean up quickly.
-    /// This might be a premature optimization preserved from the javascript implementation.
-    keycache: HashMap<String, HashMap<usize, String>>,
 }
 
 impl Default for LightCycle {
     fn default() -> Self {
         let replicas = 4; // defaulting to pretty small
-        let size = 16;
-        let keycache = HashMap::new();
         let resources = HashMap::new();
         let hashring = BTreeMap::new();
 
         Self {
             replicas,
-            size,
-            keycache,
             resources,
             hashring,
         }
@@ -66,37 +63,22 @@ impl HashRing for LightCycle {
     fn add(&mut self, resource: Self::A) {
         let id = resource.id();
 
-        // Note repetition of this code later in rebalance(). TODO refactor.
-        let id_cache = self.keycache.entry(id.to_owned()).or_default();
-
         for i in 0..self.replicas {
-            let replica_id = if let Some(cached) = id_cache.get(&i) {
-                cached.to_owned()
-            } else {
-                let hashitem = format!("{}{}", id.to_owned(), i);
-                let key = blake3::hash(hashitem.as_bytes()).to_string();
-                id_cache.insert(i, key.clone());
-                key
-            };
+            let hashitem = format!("{}{}", id.to_owned(), i);
+            let replica_id = blake3::hash(hashitem.as_bytes()).to_string();
             self.hashring.insert(replica_id, id.to_owned());
         }
 
         self.resources.insert(id.to_owned(), resource);
-
-        if self.resources.len() > self.size {
-            self.rebalance();
-        }
     }
 
     fn remove(&mut self, resource: &Self::A) {
         let id = resource.id();
-
-        if let Some(id_cache) = self.keycache.get(id) {
-            for value in id_cache.values() {
-                self.hashring.remove(value);
-            }
+        for i in 0..self.replicas {
+            let hashitem = format!("{}{}", id.to_owned(), i);
+            let replica_id = blake3::hash(hashitem.as_bytes()).to_string();
+            self.hashring.remove(&replica_id);
         }
-        self.keycache.remove(id);
         self.resources.remove(id);
     }
 
@@ -128,38 +110,8 @@ impl LightCycle {
     pub fn new_with_replica_count(replicas: usize) -> Self {
         Self {
             replicas,
-            size: replicas + SIZE_PAD,
-            keycache: HashMap::new(),
             resources: HashMap::new(),
             hashring: BTreeMap::new(),
-        }
-    }
-
-    pub fn rebalance(&mut self) {
-        let len = self.resources.len();
-
-        self.size = len + SIZE_PAD;
-        self.replicas = len + REPLICAS_PAD;
-        self.hashring = BTreeMap::new();
-
-        let ids = self.resources.keys().cloned();
-        for id in ids {
-            // self.add_replicas(&id);
-            // I want to write the above instead, but first I must figure out the ownership--
-            // we borrow immutably when we get the resource keys.
-            let id_cache = self.keycache.entry(id.to_owned()).or_default();
-
-            for i in 0..self.replicas {
-                let replica_id = if let Some(cached) = id_cache.get(&i) {
-                    cached.to_owned()
-                } else {
-                    let hashitem = format!("{}{}", id.to_owned(), i);
-                    let key = blake3::hash(hashitem.as_bytes()).to_string();
-                    id_cache.insert(i, key.clone());
-                    key
-                };
-                self.hashring.insert(replica_id, id.to_owned());
-            }
         }
     }
 }
@@ -167,40 +119,67 @@ impl LightCycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use once_cell::sync::Lazy;
 
-    struct Fruit<'a> {
-        pub name: &'a str,
+    #[derive(Debug, Clone)]
+    struct MockResource {
+        pub name: String,
     }
 
-    impl HasId for Fruit<'_> {
+    impl HasId for MockResource {
         fn id(&self) -> &str {
-            self.name
+            &self.name
         }
+    }
+
+    static FRUITS: Lazy<Vec<String>> = Lazy::new(|| {
+        vec![
+            "apple".to_string(),
+            "kumquat".to_string(),
+            "litchi".to_string(),
+            "papaya".to_string(),
+            "pear".to_string(),
+            "mangosteen".to_string(),
+            "durian".to_string(),
+        ]
+    });
+
+    static BERRIES: Lazy<Vec<String>> = Lazy::new(|| {
+        vec![
+            "banana".to_string(),
+            "tomato".to_string(),
+            "blueberry".to_string(),
+        ]
+    });
+
+    fn pick_some_fruit() -> Vec<MockResource> {
+        let mut result = Vec::new();
+        for name in FRUITS.iter() {
+            result.push(MockResource { name: name.clone() });
+        }
+
+        result
     }
 
     #[test]
     fn distributed_orchard_technology() {
-        let apple = Fruit { name: "apple" };
-        let kumquat = Fruit { name: "kumquat" };
-        let litchi = Fruit { name: "litchi" };
-        let papaya = Fruit { name: "papaya" };
-        let raspberry = Fruit { name: "raspberry" };
-
+        let fruits = pick_some_fruit();
+        eprintln!(" ---- we have {} fruits", fruits.len());
+        let mut fruit_iter = fruits.into_iter();
         let mut ring = LightCycle::new_with_replica_count(2);
 
-        ring.add(Box::new(apple));
+        let f = fruit_iter.next().unwrap();
+        ring.add(Box::new(f));
         assert_eq!(ring.len(), 2);
         assert_eq!(ring.resource_count(), 1);
 
-        // Note that lexical sorting of these names does not matter.
-        // We hash them for distribution around the ring.
-        ring.add(Box::new(papaya));
-        ring.add(Box::new(kumquat));
-        ring.add(Box::new(litchi));
-        ring.add(Box::new(raspberry));
+        for f in fruit_iter {
+            eprintln!("adding {}", f.name);
+            ring.add(Box::new(f));
+        }
 
-        assert_eq!(ring.len(), 10);
-        assert_eq!(ring.resource_count(), 5);
+        assert_eq!(ring.len(), FRUITS.len() * 2);
+        assert_eq!(ring.resource_count(), FRUITS.len());
 
         let location = ring
             .locate("nom nom nom")
@@ -220,25 +199,21 @@ mod tests {
 
     #[test]
     fn many_boxes_of_fruit() {
-        let apple = Fruit { name: "apple" };
-        let kumquat = Fruit { name: "kumquat" };
-        let litchi = Fruit { name: "litchi" };
-        let papaya = Fruit { name: "papaya" };
-        let raspberry = Fruit { name: "raspberry" };
+        let fruits = pick_some_fruit();
+        let mut fruit_iter = fruits.into_iter();
 
         let mut ring = LightCycle::new_with_replica_count(3);
 
-        ring.add(Box::new(apple));
+        let f = fruit_iter.next().unwrap();
+        ring.add(Box::new(f));
         assert_eq!(ring.len(), 3);
         assert_eq!(ring.resource_count(), 1);
 
-        ring.add(Box::new(papaya));
-        ring.add(Box::new(kumquat));
-        ring.add(Box::new(litchi));
-        ring.add(Box::new(raspberry));
-
-        assert_eq!(ring.len(), 15);
-        assert_eq!(ring.resource_count(), 5);
+        for f in fruit_iter {
+            ring.add(Box::new(f));
+        }
+        assert_eq!(ring.len(), FRUITS.len() * 3);
+        assert_eq!(ring.resource_count(), FRUITS.len());
 
         let location = ring
             .locate("nom nom nom")
@@ -253,6 +228,31 @@ mod tests {
         let location = ring
             .locate("1")
             .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "papaya");
+        assert_eq!(location.id(), "mangosteen");
+    }
+
+    #[test]
+    fn adding_same_resource_twice() {
+        let fruits = pick_some_fruit();
+        let mut ring = LightCycle::new_with_replica_count(5);
+        for f in fruits.clone().into_iter() {
+            ring.add(Box::new(f));
+        }
+        assert_eq!(ring.len(), FRUITS.len() * 5);
+        assert_eq!(ring.resource_count(), FRUITS.len());
+
+        for f in fruits.into_iter() {
+            ring.add(Box::new(f));
+        }
+        assert_eq!(
+            ring.len(),
+            FRUITS.len() * 5,
+            "adding resources we already have should be a no-op"
+        );
+        assert_eq!(
+            ring.resource_count(),
+            FRUITS.len(),
+            "adding resources we already have should be a no-op"
+        );
     }
 }
