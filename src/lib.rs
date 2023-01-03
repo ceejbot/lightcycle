@@ -162,9 +162,34 @@ mod tests {
     }
 
     #[test]
-    fn distributed_orchard_technology() {
+    fn consistent_means_consistent() {
+        let mut ring = LightCycle::new_with_replica_count(4);
+        for name in BERRIES.clone().iter() {
+            ring.add(Box::new(MockResource { name: name.clone() }));
+        }
+        let replica_4 = ring
+            .locate("strawberry")
+            .expect("we accept strawberries in berry club");
+
+        let mut ring = LightCycle::new_with_replica_count(20);
+        for name in BERRIES.clone().iter() {
+            ring.add(Box::new(MockResource { name: name.clone() }));
+        }
+
+        let replica_20 = ring
+            .locate("strawberry")
+            .expect("we accept strawberries in berry club");
+
+        assert_eq!(
+            replica_4.id(),
+            replica_20.id(),
+            "location is stable across replications"
+        );
+    }
+
+    #[test]
+    fn adding_new_replicas_moves_locations() {
         let fruits = pick_some_fruit();
-        eprintln!(" ---- we have {} fruits", fruits.len());
         let mut fruit_iter = fruits.into_iter();
         let mut ring = LightCycle::new_with_replica_count(2);
 
@@ -172,6 +197,11 @@ mod tests {
         ring.add(Box::new(f));
         assert_eq!(ring.len(), 2);
         assert_eq!(ring.resource_count(), 1);
+
+        let location = ring
+            .locate("nom nom nom")
+            .expect("everything should have a home of some kind");
+        assert_eq!(location.id(), "apple");
 
         for f in fruit_iter {
             eprintln!("adding {}", f.name);
@@ -195,40 +225,6 @@ mod tests {
             .locate("1")
             .expect("everything should have a home of some kind");
         assert_eq!(location.id(), "papaya");
-    }
-
-    #[test]
-    fn many_boxes_of_fruit() {
-        let fruits = pick_some_fruit();
-        let mut fruit_iter = fruits.into_iter();
-
-        let mut ring = LightCycle::new_with_replica_count(3);
-
-        let f = fruit_iter.next().unwrap();
-        ring.add(Box::new(f));
-        assert_eq!(ring.len(), 3);
-        assert_eq!(ring.resource_count(), 1);
-
-        for f in fruit_iter {
-            ring.add(Box::new(f));
-        }
-        assert_eq!(ring.len(), FRUITS.len() * 3);
-        assert_eq!(ring.resource_count(), FRUITS.len());
-
-        let location = ring
-            .locate("nom nom nom")
-            .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "kumquat");
-
-        let location = ring
-            .locate("asdfasdfasdfsafasdf")
-            .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "apple");
-
-        let location = ring
-            .locate("1")
-            .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "mangosteen");
     }
 
     #[test]
