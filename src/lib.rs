@@ -83,6 +83,9 @@ impl HashRing for LightCycle {
     }
 
     fn locate(&self, id: &str) -> Option<&Self::A> {
+        // This search is the heart of the consistent hash ring concept.
+        // The data structure we use for the hashring has to be something
+        // that maintains a lexical ordering and lets us do this search.
         if let Some((_, resource_id)) = self
             .hashring
             .iter()
@@ -91,6 +94,7 @@ impl HashRing for LightCycle {
         {
             self.resources.get(resource_id)
         } else if let Some((_, resource_id)) = self.hashring.first_key_value() {
+            // We're past the end, so we wrap around to the start.
             self.resources.get(resource_id)
         } else {
             None
