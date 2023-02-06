@@ -19,7 +19,7 @@ struct RedisCacheShard {
 }
 
 impl RedisCacheShard {
-	fn new(host, port, db) -> anyhow::Result<Self>{
+	fn new(host, port, db) -> anyhow::Result<Self> {
 		let uri = format!("redis://{host}:{port}/{db}");
 		let client = redis::Client::open(uri)?;
 		Ok(Self { client, uri })

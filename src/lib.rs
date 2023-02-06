@@ -24,7 +24,9 @@ trait HashRing {
     /// Remove a resource from the hash ring.
     fn remove(&mut self, resource: &Self::A);
     /// Given something you want to place on the ring, look up the matching resource to use.
-    /// The id here is not a resource id, but instead
+    /// The id here is not a resource id, but instead something that needs to be stored or placed
+    /// on one of the managed resources. An example would be a key for a cachable item that you
+    /// want to choose a cache resource for.
     fn locate(&self, id: &str) -> Option<&Self::A>;
     /// Resource count.
     fn resource_count(&self) -> usize;
