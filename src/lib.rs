@@ -85,20 +85,18 @@ impl HashRing for LightCycle {
     }
 
     fn locate(&self, id: &str) -> Option<&Self::A> {
+        let hashed_id = blake3::hash(id.as_bytes()).to_string();
+
         // This search is the heart of the consistent hash ring concept.
         // The data structure we use for the hashring has to be something
         // that maintains a lexical ordering and lets us do this search.
-        if let Some((_, resource_id)) = self
-            .hashring
-            .iter()
-            .filter(|(_k, v)| v <= &&id.to_string())
-            .last()
-        {
+        if let Some((_hash, resource_id)) = self.hashring.iter().find(|(k, _v)| k >= &&hashed_id) {
             self.resources.get(resource_id)
-        } else if let Some((_, resource_id)) = self.hashring.first_key_value() {
-            // We're past the end, so we wrap around to the start.
+        } else if let Some((_hash, resource_id)) = self.hashring.last_key_value() {
+            // We're past the end, so we take the last node.
             self.resources.get(resource_id)
         } else {
+            // This case happens if the ring is empty. People who do that get what they deserve.
             None
         }
     }
@@ -146,15 +144,7 @@ mod tests {
             "papaya".to_string(),
             "pear".to_string(),
             "mangosteen".to_string(),
-            "durian".to_string(),
-        ]
-    });
-
-    static BERRIES: Lazy<Vec<String>> = Lazy::new(|| {
-        vec![
-            "banana".to_string(),
-            "tomato".to_string(),
-            "blueberry".to_string(),
+            "orange".to_string(),
         ]
     });
 
@@ -168,29 +158,22 @@ mod tests {
     }
 
     #[test]
-    fn consistent_means_consistent() {
-        let mut ring = LightCycle::new_with_replica_count(4);
-        for name in BERRIES.clone().iter() {
-            ring.add(Box::new(MockResource { name: name.clone() }));
-        }
-        let replica_4 = ring
-            .locate("strawberry")
-            .expect("we accept strawberries in berry club");
+    fn locations_behave_as_expected() {
+        // This test knows about how we generate id hashes.
+        // First, make a zero-replicas ring.
+        let mut ring = LightCycle::new_with_replica_count(1);
+        ring.add(Box::new(MockResource {
+            name: "pecan".to_string(),
+        }));
+        ring.add(Box::new(MockResource {
+            name: "walnut".to_string(),
+        }));
 
-        let mut ring = LightCycle::new_with_replica_count(20);
-        for name in BERRIES.clone().iter() {
-            ring.add(Box::new(MockResource { name: name.clone() }));
-        }
+        let location = ring.locate("pecan0").unwrap();
+        assert_eq!(location.id(), "pecan");
 
-        let replica_20 = ring
-            .locate("strawberry")
-            .expect("we accept strawberries in berry club");
-
-        assert_eq!(
-            replica_4.id(),
-            replica_20.id(),
-            "location is stable across replications"
-        );
+        let location = ring.locate("walnut0").unwrap();
+        assert_eq!(location.id(), "walnut");
     }
 
     #[test]
@@ -210,7 +193,6 @@ mod tests {
         assert_eq!(location.id(), "apple");
 
         for f in fruit_iter {
-            eprintln!("adding {}", f.name);
             ring.add(Box::new(f));
         }
 
@@ -220,17 +202,34 @@ mod tests {
         let location = ring
             .locate("nom nom nom")
             .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "kumquat");
+        assert_eq!(location.id(), "pear");
 
         let location = ring
             .locate("asdfasdfasdfsafasdf")
             .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "apple");
+        assert_eq!(location.id(), "orange");
 
         let location = ring
             .locate("1")
             .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "papaya");
+        assert_eq!(location.id(), "mangosteen");
+    }
+
+    #[test]
+    fn single_node_rings() {
+        let mut ring = LightCycle::new_with_replica_count(5);
+        let durian = MockResource {
+            name: "durian".to_string(),
+        };
+        ring.add(Box::new(durian)); // nobody likes being next to durian
+        let location = ring
+            .locate("a")
+            .expect("everything should have a home of some kind");
+        assert_eq!(location.id(), "durian");
+        let location = ring
+            .locate("z")
+            .expect("everything should have a home of some kind");
+        assert_eq!(location.id(), "durian");
     }
 
     #[test]
