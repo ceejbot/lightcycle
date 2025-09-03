@@ -1,37 +1,31 @@
-#![forbid(unsafe_code)]
-#![deny(future_incompatible)]
-#![warn(
-    missing_debug_implementations,
-    rust_2018_idioms,
-    trivial_casts,
-    unused_qualifications
-)]
+//! Insert documentation here.
 
-use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Things that we can store in the ring must have an ID string they advertise.
 pub trait HasId: std::fmt::Debug {
     fn id(&self) -> &str;
 }
 
-trait HashRing {
+pub trait HashRing {
     /// This type represents the resources we are distributing around the hash ring.
-    type A;
+    type Item;
 
     /// Add a new resource to the hash ring. Stores replica keys distributed around the ring.
-    fn add(&mut self, resource: Self::A);
+    fn add(&mut self, resource: Self::Item);
     /// Remove a resource from the hash ring.
-    fn remove(&mut self, resource: &Self::A);
+    fn remove(&mut self, resource: &Self::Item);
     /// Given something you want to place on the ring, look up the matching resource to use.
     /// The id here is not a resource id, but instead something that needs to be stored or placed
     /// on one of the managed resources. An example would be a key for a cachable item that you
     /// want to choose a cache resource for.
-    fn locate(&self, id: &str) -> Option<&Self::A>;
+    fn locate(&self, id: &str) -> Option<&Self::Item>;
     /// Resource count.
     fn resource_count(&self) -> usize;
     /// Total number of entries in the ring.
     fn len(&self) -> usize;
+    /// Is the hashring empty?
+    fn is_empty(&self) -> bool;
 }
 
 /// A consistent hash ring with blue glowing lights.
@@ -60,9 +54,9 @@ impl Default for LightCycle {
 }
 
 impl HashRing for LightCycle {
-    type A = Box<dyn HasId>;
+    type Item = Box<dyn HasId>;
 
-    fn add(&mut self, resource: Self::A) {
+    fn add(&mut self, resource: Self::Item) {
         let id = resource.id();
 
         for i in 0..self.replicas {
@@ -74,7 +68,7 @@ impl HashRing for LightCycle {
         self.resources.insert(id.to_owned(), resource);
     }
 
-    fn remove(&mut self, resource: &Self::A) {
+    fn remove(&mut self, resource: &Self::Item) {
         let id = resource.id();
         for i in 0..self.replicas {
             let hashitem = format!("{}{}", id.to_owned(), i);
@@ -84,7 +78,7 @@ impl HashRing for LightCycle {
         self.resources.remove(id);
     }
 
-    fn locate(&self, id: &str) -> Option<&Self::A> {
+    fn locate(&self, id: &str) -> Option<&Self::Item> {
         let hashed_id = blake3::hash(id.as_bytes()).to_string();
 
         // This search is the heart of the consistent hash ring concept.
@@ -108,6 +102,10 @@ impl HashRing for LightCycle {
     fn len(&self) -> usize {
         self.hashring.len()
     }
+
+    fn is_empty(&self) -> bool {
+        self.hashring.is_empty()
+    }
 }
 
 impl LightCycle {
@@ -122,8 +120,9 @@ impl LightCycle {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
     use super::*;
-    use once_cell::sync::Lazy;
 
     #[derive(Debug, Clone)]
     struct MockResource {
@@ -136,7 +135,7 @@ mod tests {
         }
     }
 
-    static FRUITS: Lazy<Vec<String>> = Lazy::new(|| {
+    static FRUITS: LazyLock<Vec<String>> = LazyLock::new(|| {
         vec![
             "apple".to_string(),
             "kumquat".to_string(),
@@ -169,10 +168,10 @@ mod tests {
             name: "walnut".to_string(),
         }));
 
-        let location = ring.locate("pecan0").unwrap();
+        let location = ring.locate("pecan0").expect("pecan0 should be there");
         assert_eq!(location.id(), "pecan");
 
-        let location = ring.locate("walnut0").unwrap();
+        let location = ring.locate("walnut0").expect("walnut0 should be there");
         assert_eq!(location.id(), "walnut");
     }
 
@@ -182,7 +181,7 @@ mod tests {
         let mut fruit_iter = fruits.into_iter();
         let mut ring = LightCycle::new_with_replica_count(2);
 
-        let f = fruit_iter.next().unwrap();
+        let f = fruit_iter.next().expect("there should be a first fruitd");
         ring.add(Box::new(f));
         assert_eq!(ring.len(), 2);
         assert_eq!(ring.resource_count(), 1);
@@ -209,9 +208,7 @@ mod tests {
             .expect("everything should have a home of some kind");
         assert_eq!(location.id(), "orange");
 
-        let location = ring
-            .locate("1")
-            .expect("everything should have a home of some kind");
+        let location = ring.locate("1").expect("everything should have a home of some kind");
         assert_eq!(location.id(), "mangosteen");
     }
 
@@ -222,13 +219,9 @@ mod tests {
             name: "durian".to_string(),
         };
         ring.add(Box::new(durian)); // nobody likes being next to durian
-        let location = ring
-            .locate("a")
-            .expect("everything should have a home of some kind");
+        let location = ring.locate("a").expect("everything should have a home of some kind");
         assert_eq!(location.id(), "durian");
-        let location = ring
-            .locate("z")
-            .expect("everything should have a home of some kind");
+        let location = ring.locate("z").expect("everything should have a home of some kind");
         assert_eq!(location.id(), "durian");
     }
 

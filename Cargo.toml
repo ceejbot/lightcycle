@@ -1,16 +1,29 @@
 [package]
 name = "lightcycle"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["C J Silverio <ceejceej@gmail.com>"]
 description = "A consistent hash ring using blake3."
 readme = "README.md"
-license = "BlueOak-1.0.0"
+license = "Parity-7.0.0"
 repository = "https://github.com/ceejbot/lightcycle"
 homepage = "https://github.com/ceejbot/lightcycle"
 
 [dependencies]
 blake3 = "1.3.3"
 
-[dev-dependencies]
-once_cell = "1.17.0"
+[lints.rust]
+unsafe_code = { level = "deny", priority = 1 }
+future_incompatible = { level = "deny", priority = 2 }
+trivial_casts = { level = "warn", priority = 3 }
+rust_2018_idioms = { level = "warn", priority = 4 }
+
+[lints.clippy]
+unwrap_used = "deny"
+
+[profile.release]
+lto = true        # Enable full link-time optimization
+codegen-units = 1 # Single codegen unit for better optimization
+opt-level = 3     # Maximum optimization
+strip = true      # Strip symbols for smaller binary
+panic = "abort"   # Smaller binary, no unwinding
