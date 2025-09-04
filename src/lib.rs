@@ -1,9 +1,28 @@
-//! Insert documentation here.
+//! A consistent hash ring implementation using configurable hash functions.
+//!
+//! LightCycle provides a way to distribute items to specific instances of otherwise-identical
+//! resources in a balanced way. You have two choices of distribution method: the rendezvous hash,
+//! and the more specific case of the consistent hash. The rendezvous hash is in more general use
+//! and has better performance characteristics overall, but the consistent hash is still a fun
+//! data structure. Both structures can be used for cache sharding, load balancing with session
+//! affinity, light cycle distribution, and distributed systems coordination. For the users!
 
-use std::collections::{BTreeMap, HashMap};
+mod consistent;
+pub mod hasher;
+mod rendezvous;
+
+pub use consistent::ConsistentRing;
+use hasher::DefaultHasher;
+pub use rendezvous::RendezvousRing;
+
+/// Fun names! Use these or be boring.
+pub type LightCycle<H = DefaultHasher> = ConsistentRing<H>;
+pub type Recognizer<H = DefaultHasher> = RendezvousRing<H>;
+///  Ty curtosis for the name for our error type!
+pub type EndOfLine = LightCycleError;
 
 /// Things that we can store in the ring must have an ID string they advertise.
-pub trait HasId: std::fmt::Debug {
+pub trait HasId: std::fmt::Debug + Send + Sync {
     fn id(&self) -> &str;
 }
 
@@ -26,227 +45,29 @@ pub trait HashRing {
     fn len(&self) -> usize;
     /// Is the hashring empty?
     fn is_empty(&self) -> bool;
-}
 
-/// A consistent hash ring with blue glowing lights.
-#[derive(Debug)]
-pub struct LightCycle {
-    /// The number of replicas of each resource to insert into the ring. Ring size = replicas * entries.
-    replicas: usize,
-    /// The resources we're tracking.
-    resources: HashMap<String, Box<dyn HasId>>,
-    /// The consistent hash ring itself: each entry points to a key in the resource map.
-    hashring: BTreeMap<String, String>,
-}
+    /// Add a new resource with a specific weight. For algorithms that don't support weighting,
+    /// the weight is ignored and this behaves like `add()`.
+    fn add_weighted(&mut self, resource: Self::Item, _weight: f64) {
+        // Default implementation ignores weight - used by ConsistentRing
+        self.add(resource);
+    }
 
-impl Default for LightCycle {
-    fn default() -> Self {
-        let replicas = 4; // defaulting to pretty small
-        let resources = HashMap::new();
-        let hashring = BTreeMap::new();
-
-        Self {
-            replicas,
-            resources,
-            hashring,
-        }
+    /// Update the weight of an existing resource. Returns an error if the resource is not found
+    /// or if the implementation doesn't support weight updates.
+    fn update_weight(&mut self, _resource: &Self::Item, _weight: f64) -> Result<(), EndOfLine> {
+        // Default implementation returns error - used by ConsistentRing
+        Err(EndOfLine::WeightsUnsupported)
     }
 }
 
-impl HashRing for LightCycle {
-    type Item = Box<dyn HasId>;
+use thiserror::Error;
 
-    fn add(&mut self, resource: Self::Item) {
-        let id = resource.id();
-
-        for i in 0..self.replicas {
-            let hashitem = format!("{}{}", id.to_owned(), i);
-            let replica_id = blake3::hash(hashitem.as_bytes()).to_string();
-            self.hashring.insert(replica_id, id.to_owned());
-        }
-
-        self.resources.insert(id.to_owned(), resource);
-    }
-
-    fn remove(&mut self, resource: &Self::Item) {
-        let id = resource.id();
-        for i in 0..self.replicas {
-            let hashitem = format!("{}{}", id.to_owned(), i);
-            let replica_id = blake3::hash(hashitem.as_bytes()).to_string();
-            self.hashring.remove(&replica_id);
-        }
-        self.resources.remove(id);
-    }
-
-    fn locate(&self, id: &str) -> Option<&Self::Item> {
-        let hashed_id = blake3::hash(id.as_bytes()).to_string();
-
-        // This search is the heart of the consistent hash ring concept.
-        // The data structure we use for the hashring has to be something
-        // that maintains a lexical ordering and lets us do this search.
-        if let Some((_hash, resource_id)) = self.hashring.iter().find(|(k, _v)| k >= &&hashed_id) {
-            self.resources.get(resource_id)
-        } else if let Some((_hash, resource_id)) = self.hashring.last_key_value() {
-            // We're past the end, so we take the last node.
-            self.resources.get(resource_id)
-        } else {
-            // This case happens if the ring is empty. People who do that get what they deserve.
-            None
-        }
-    }
-
-    fn resource_count(&self) -> usize {
-        self.resources.len()
-    }
-
-    fn len(&self) -> usize {
-        self.hashring.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.hashring.is_empty()
-    }
-}
-
-impl LightCycle {
-    pub fn new_with_replica_count(replicas: usize) -> Self {
-        Self {
-            replicas,
-            resources: HashMap::new(),
-            hashring: BTreeMap::new(),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::LazyLock;
-
-    use super::*;
-
-    #[derive(Debug, Clone)]
-    struct MockResource {
-        pub name: String,
-    }
-
-    impl HasId for MockResource {
-        fn id(&self) -> &str {
-            &self.name
-        }
-    }
-
-    static FRUITS: LazyLock<Vec<String>> = LazyLock::new(|| {
-        vec![
-            "apple".to_string(),
-            "kumquat".to_string(),
-            "litchi".to_string(),
-            "papaya".to_string(),
-            "pear".to_string(),
-            "mangosteen".to_string(),
-            "orange".to_string(),
-        ]
-    });
-
-    fn pick_some_fruit() -> Vec<MockResource> {
-        let mut result = Vec::new();
-        for name in FRUITS.iter() {
-            result.push(MockResource { name: name.clone() });
-        }
-
-        result
-    }
-
-    #[test]
-    fn locations_behave_as_expected() {
-        // This test knows about how we generate id hashes.
-        // First, make a zero-replicas ring.
-        let mut ring = LightCycle::new_with_replica_count(1);
-        ring.add(Box::new(MockResource {
-            name: "pecan".to_string(),
-        }));
-        ring.add(Box::new(MockResource {
-            name: "walnut".to_string(),
-        }));
-
-        let location = ring.locate("pecan0").expect("pecan0 should be there");
-        assert_eq!(location.id(), "pecan");
-
-        let location = ring.locate("walnut0").expect("walnut0 should be there");
-        assert_eq!(location.id(), "walnut");
-    }
-
-    #[test]
-    fn adding_new_replicas_moves_locations() {
-        let fruits = pick_some_fruit();
-        let mut fruit_iter = fruits.into_iter();
-        let mut ring = LightCycle::new_with_replica_count(2);
-
-        let f = fruit_iter.next().expect("there should be a first fruitd");
-        ring.add(Box::new(f));
-        assert_eq!(ring.len(), 2);
-        assert_eq!(ring.resource_count(), 1);
-
-        let location = ring
-            .locate("nom nom nom")
-            .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "apple");
-
-        for f in fruit_iter {
-            ring.add(Box::new(f));
-        }
-
-        assert_eq!(ring.len(), FRUITS.len() * 2);
-        assert_eq!(ring.resource_count(), FRUITS.len());
-
-        let location = ring
-            .locate("nom nom nom")
-            .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "pear");
-
-        let location = ring
-            .locate("asdfasdfasdfsafasdf")
-            .expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "orange");
-
-        let location = ring.locate("1").expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "mangosteen");
-    }
-
-    #[test]
-    fn single_node_rings() {
-        let mut ring = LightCycle::new_with_replica_count(5);
-        let durian = MockResource {
-            name: "durian".to_string(),
-        };
-        ring.add(Box::new(durian)); // nobody likes being next to durian
-        let location = ring.locate("a").expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "durian");
-        let location = ring.locate("z").expect("everything should have a home of some kind");
-        assert_eq!(location.id(), "durian");
-    }
-
-    #[test]
-    fn adding_same_resource_twice() {
-        let fruits = pick_some_fruit();
-        let mut ring = LightCycle::new_with_replica_count(5);
-        for f in fruits.clone().into_iter() {
-            ring.add(Box::new(f));
-        }
-        assert_eq!(ring.len(), FRUITS.len() * 5);
-        assert_eq!(ring.resource_count(), FRUITS.len());
-
-        for f in fruits.into_iter() {
-            ring.add(Box::new(f));
-        }
-        assert_eq!(
-            ring.len(),
-            FRUITS.len() * 5,
-            "adding resources we already have should be a no-op"
-        );
-        assert_eq!(
-            ring.resource_count(),
-            FRUITS.len(),
-            "adding resources we already have should be a no-op"
-        );
-    }
+/// We only have two errors, so let's define them right here.
+#[derive(Debug, Error)]
+pub enum LightCycleError {
+    #[error("Resource {id} not found")]
+    NotFound { id: String },
+    #[error("Weight updates not supported by this hash ring implementation")]
+    WeightsUnsupported,
 }
