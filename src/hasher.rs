@@ -61,106 +61,132 @@ impl ConsistentHasher for XXHasher {
     }
 }
 
-/// Blake2 hasher implementation (pure Rust, cryptographic)
-#[cfg(feature = "hash-blake2")]
-#[derive(Clone)]
-pub struct Blake2Hasher;
 
-#[cfg(feature = "hash-blake2")]
-impl ConsistentHasher for Blake2Hasher {
+/// MetroHash hasher implementation (fast, high-quality)
+#[cfg(feature = "hash-metrohash")]
+#[derive(Clone)]
+pub struct MetroHasher;
+
+#[cfg(feature = "hash-metrohash")]
+impl ConsistentHasher for MetroHasher {
     fn new() -> Self {
-        Blake2Hasher
+        MetroHasher
     }
 
     fn hash(&self, data: &[u8]) -> u64 {
-        use blake2::{Blake2b, Digest};
-        let mut hasher = Blake2b::<typenum::U8>::new();
-        hasher.update(data);
-        let result = hasher.finalize();
-        u64::from_le_bytes(result.into())
-    }
-
-    fn name(&self) -> &'static str {
-        "blake2"
-    }
-}
-
-/// SHA-256 hasher implementation (FIPS compliant)
-#[cfg(feature = "hash-sha2")]
-#[derive(Clone)]
-pub struct Sha256Hasher;
-
-#[cfg(feature = "hash-sha2")]
-impl ConsistentHasher for Sha256Hasher {
-    fn new() -> Self {
-        Sha256Hasher
-    }
-
-    fn hash(&self, data: &[u8]) -> u64 {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        let result = hasher.finalize();
-        u64::from_le_bytes([
-            result[0], result[1], result[2], result[3], result[4], result[5], result[6], result[7],
-        ])
-    }
-
-    fn name(&self) -> &'static str {
-        "sha256"
-    }
-}
-
-/// FNV-1a hasher implementation (simple, fast, built-in)
-#[cfg(feature = "hash-fnv")]
-#[derive(Clone)]
-pub struct FnvHasher;
-
-#[cfg(feature = "hash-fnv")]
-impl ConsistentHasher for FnvHasher {
-    fn new() -> Self {
-        FnvHasher
-    }
-
-    fn hash(&self, data: &[u8]) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
+        use metrohash::MetroHash64;
         use std::hash::Hasher;
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = MetroHash64::new();
         hasher.write(data);
         hasher.finish()
     }
 
     fn name(&self) -> &'static str {
-        "fnv"
+        "metrohash"
     }
 }
 
-/// Default hasher type based on feature flags
-#[cfg(feature = "hash-blake3")]
-pub type DefaultHasher = Blake3Hasher;
+/// RapidHash quality hasher implementation (high-quality distribution)
+#[cfg(feature = "hash-rapidhash")]
+#[derive(Clone)]
+pub struct RapidHashQualityHasher;
 
-#[cfg(all(feature = "hash-xxhash", not(feature = "hash-blake3")))]
+#[cfg(feature = "hash-rapidhash")]
+impl ConsistentHasher for RapidHashQualityHasher {
+    fn new() -> Self {
+        RapidHashQualityHasher
+    }
+
+    fn hash(&self, data: &[u8]) -> u64 {
+        use std::hash::BuildHasher;
+        use rapidhash::quality::SeedableState;
+        let hasher = SeedableState::fixed();
+        hasher.hash_one(data)
+    }
+
+    fn name(&self) -> &'static str {
+        "rapidhash-quality"
+    }
+}
+
+/// RapidHash fast hasher implementation (optimized for speed)
+#[cfg(feature = "hash-rapidhash")]
+#[derive(Clone)]
+pub struct RapidHashFastHasher;
+
+#[cfg(feature = "hash-rapidhash")]
+impl ConsistentHasher for RapidHashFastHasher {
+    fn new() -> Self {
+        RapidHashFastHasher
+    }
+
+    fn hash(&self, data: &[u8]) -> u64 {
+        use std::hash::BuildHasher;
+        use rapidhash::fast::SeedableState;
+        let hasher = SeedableState::fixed();
+        hasher.hash_one(data)
+    }
+
+    fn name(&self) -> &'static str {
+        "rapidhash-fast"
+    }
+}
+
+/// Murmur3 hasher implementation (popular, good distribution)
+#[cfg(feature = "hash-murmur3")]
+#[derive(Clone)]
+pub struct Murmur3Hasher;
+
+#[cfg(feature = "hash-murmur3")]
+impl ConsistentHasher for Murmur3Hasher {
+    fn new() -> Self {
+        Murmur3Hasher
+    }
+
+    fn hash(&self, data: &[u8]) -> u64 {
+        murmurs::murmur3_x64_128(data, 0)[0]
+    }
+
+    fn name(&self) -> &'static str {
+        "murmur3"
+    }
+}
+
+
+
+/// Default hasher type based on feature flags. Since somebody might turn on all the hashes
+/// at once, we fall through them in the order optimized for rendezvous hashing performance.
+/// Based on comprehensive testing, Murmur3 provides the best balance of speed and distribution quality.
+#[cfg(feature = "hash-murmur3")]
+pub type DefaultHasher = Murmur3Hasher;
+
+#[cfg(all(feature = "hash-xxhash", not(feature = "hash-murmur3")))]
 pub type DefaultHasher = XXHasher;
 
-#[cfg(all(feature = "hash-blake2", not(feature = "hash-blake3"), not(feature = "hash-xxhash")))]
-pub type DefaultHasher = Blake2Hasher;
+#[cfg(all(
+    feature = "hash-rapidhash",
+    not(feature = "hash-murmur3"),
+    not(feature = "hash-xxhash")
+))]
+pub type DefaultHasher = RapidHashFastHasher;
 
 #[cfg(all(
-    feature = "hash-sha2",
-    not(feature = "hash-blake3"),
+    feature = "hash-metrohash",
+    not(feature = "hash-murmur3"),
     not(feature = "hash-xxhash"),
-    not(feature = "hash-blake2")
+    not(feature = "hash-rapidhash")
 ))]
-pub type DefaultHasher = Sha256Hasher;
+pub type DefaultHasher = MetroHasher;
 
 #[cfg(all(
-    feature = "hash-fnv",
-    not(feature = "hash-blake3"),
+    feature = "hash-blake3",
+    not(feature = "hash-murmur3"),
     not(feature = "hash-xxhash"),
-    not(feature = "hash-blake2"),
-    not(feature = "hash-sha2")
+    not(feature = "hash-rapidhash"),
+    not(feature = "hash-metrohash")
 ))]
-pub type DefaultHasher = FnvHasher;
+pub type DefaultHasher = Blake3Hasher;
+
 
 #[cfg(test)]
 mod tests {

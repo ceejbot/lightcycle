@@ -6,7 +6,7 @@ Rendezvous hashing is a more general yet simpler-to-implement variation of consi
 
 You may feel free to call these data structures by their more fun names of `LightCycle` and `Recognizer`, or you can be boring and call them `ConsistentRing` and `RendezvousRing`.
 
-I haven't used these in production workloads (yet?), but they are well-tested and have reasonable performance, because that's part of the fun.
+I haven't used these in production workloads (yet?), but they are well-tested and have reasonable performance, because that's part of the fun. The crate has very few dependencies:
 
 ## Examples
 
@@ -157,17 +157,27 @@ let weighted_resources = ring.resources_with_weights();
 
 ### Hash Functions
 
-The library supports multiple hash functions via feature flags:
+The murmur3 hash, as implemented in the [murmurs crate](https://github.com/owengombas/murmurs) is the default hash function in use. It's a fast non-cryptographic hash, which is the category of hash algorithm idea for this use case. Other algorithms are provided as crate features:
+
+**Hash Function Performance (rendezvous hashing):**
+- `murmur3`: Best overall (51ns/op, excellent distribution), default feature
+- `xxhash`: Fastest (40ns/op, good distribution), `features = ["hash-xxhash"]`
+- `rapidhash-fast`: Fast with excellent weighted accuracy (66ns/op, 98.2%), `features = ["hash-rapidhash"]`
+- `rapidhash-quality`: Best weighted accuracy (75ns/op, 99.0%), `features = ["hash-rapidhash"]`
+- `metrohash`: High-quality distribution (67ns/op), `features = ["hash-metrohash"]`
+- `blake3`: Cryptographic option (978ns/op), `features = ["hash-blake3"]`
+
+Remember to disable default features to turn off murmur3:
 
 ```toml
 [dependencies]
-# Default uses blake3
+# Default uses murmur3 (best overall performance)
 lightcycle = "0.2"
 
 # Use xxhash for maximum speed
 lightcycle = { version = "0.2", default-features = false, features = ["hash-xxhash"] }
 
-# Other options: hash-blake2, hash-sha2, hash-fnv
+# Other options: hash-metrohash, hash-rapidhash, hash-blake3
 ```
 
 ## Performance
