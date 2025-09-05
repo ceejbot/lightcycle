@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::hasher::{ConsistentHasher, DefaultHasher};
+use crate::hashes::{ConsistentHasher, DefaultHasher};
 use crate::{HasId, HashRing};
 
 /// A consistent hash ring implementation.
@@ -39,9 +39,9 @@ impl<H> HashRing for ConsistentRing<H>
 where
     H: ConsistentHasher,
 {
-    type Item = Box<dyn HasId>;
+    type Resource = Box<dyn HasId>;
 
-    fn add(&mut self, resource: Self::Item) {
+    fn add(&mut self, resource: Self::Resource) {
         let id = resource.id();
 
         for i in 0..self.replicas {
@@ -53,7 +53,7 @@ where
         self.resources.insert(id.to_owned(), resource);
     }
 
-    fn remove(&mut self, resource: &Self::Item) {
+    fn remove(&mut self, resource: &Self::Resource) {
         let id = resource.id();
         for i in 0..self.replicas {
             let hashitem = format!("{}{}", id, i);
@@ -63,7 +63,7 @@ where
         self.resources.remove(id);
     }
 
-    fn locate(&self, id: &str) -> Option<&Self::Item> {
+    fn locate(&self, id: &str) -> Option<&Self::Resource> {
         let hashed_id = self.hasher.hash(id.as_bytes());
 
         // This search is the heart of the consistent hash ring concept.

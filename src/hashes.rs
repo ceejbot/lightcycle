@@ -61,7 +61,6 @@ impl ConsistentHasher for XXHasher {
     }
 }
 
-
 /// MetroHash hasher implementation (fast, high-quality)
 #[cfg(feature = "hash-metrohash")]
 #[derive(Clone)]
@@ -74,8 +73,9 @@ impl ConsistentHasher for MetroHasher {
     }
 
     fn hash(&self, data: &[u8]) -> u64 {
-        use metrohash::MetroHash64;
         use std::hash::Hasher;
+
+        use metrohash::MetroHash64;
         let mut hasher = MetroHash64::new();
         hasher.write(data);
         hasher.finish()
@@ -99,6 +99,7 @@ impl ConsistentHasher for RapidHashQualityHasher {
 
     fn hash(&self, data: &[u8]) -> u64 {
         use std::hash::BuildHasher;
+
         use rapidhash::quality::SeedableState;
         let hasher = SeedableState::fixed();
         hasher.hash_one(data)
@@ -122,6 +123,7 @@ impl ConsistentHasher for RapidHashFastHasher {
 
     fn hash(&self, data: &[u8]) -> u64 {
         use std::hash::BuildHasher;
+
         use rapidhash::fast::SeedableState;
         let hasher = SeedableState::fixed();
         hasher.hash_one(data)
@@ -151,8 +153,6 @@ impl ConsistentHasher for Murmur3Hasher {
         "murmur3"
     }
 }
-
-
 
 /// Default hasher type based on feature flags. Since somebody might turn on all the hashes
 /// at once, we fall through them in the order optimized for rendezvous hashing performance.
@@ -187,7 +187,6 @@ pub type DefaultHasher = MetroHasher;
 ))]
 pub type DefaultHasher = Blake3Hasher;
 
-
 #[cfg(test)]
 mod tests {
 
@@ -216,10 +215,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(
-        feature = "hash-blake3",
-        feature = "hash-xxhash"
-    ))]
+    #[cfg(any(feature = "hash-blake3", feature = "hash-xxhash"))]
     fn default_hasher() {
         let hasher = DefaultHasher::new();
         let data = b"consistent hashing test";

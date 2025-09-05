@@ -1,12 +1,14 @@
-use crate::hasher::{ConsistentHasher, DefaultHasher};
+//! The rendezvous hash data structure.
+//!
+//! The rendezvous hashing algorithm (also known as Highest Random Weight)
+/// assigns each key to the node with the highest `hash(key + node_id) * weight` value.
+/// This distributes the keys fairly by default while allowing you to bias the distribution
+/// toward weighted nodes if you want. You might, for example, have a node that has more memory capacity
+/// or a larger disk, and want to store more items there.
+use crate::hashes::{ConsistentHasher, DefaultHasher};
 use crate::{EndOfLine, HasId, HashRing};
 
 /// A rendezvous hash ring implementation with support for weighted nodes.
-///
-/// RendezvousRing uses the rendezvous hashing algorithm (also known as Highest Random Weight)
-/// where each key is assigned to the node with the highest hash(key + node_id) * weight value.
-/// This provides excellent load distribution while supporting weighted nodes for different
-/// capacity resources.
 #[derive(Debug)]
 pub struct RendezvousRing<H = DefaultHasher>
 where
@@ -15,7 +17,7 @@ where
     /// The resources and their weights: (resource, weight)
     resources: Vec<(Box<dyn HasId>, f64)>,
     /// The hash function to use for rendezvous hashing
-    hasher: H,
+    algorithm: H,
 }
 
 impl<H> Default for RendezvousRing<H>
@@ -25,7 +27,7 @@ where
     fn default() -> Self {
         Self {
             resources: Vec::new(),
-            hasher: H::new(),
+            algorithm: H::new(),
         }
     }
 }
@@ -34,19 +36,19 @@ impl<H> HashRing for RendezvousRing<H>
 where
     H: ConsistentHasher,
 {
-    type Item = Box<dyn HasId>;
+    type Resource = Box<dyn HasId>;
 
-    fn add(&mut self, resource: Self::Item) {
+    fn add(&mut self, item: Self::Resource) {
         // Default weight of 1.0 for unweighted adds
-        self.add_weighted(resource, 1.0);
+        self.add_weighted(item, 1.0);
     }
 
-    fn remove(&mut self, resource: &Self::Item) {
+    fn remove(&mut self, resource: &Self::Resource) {
         let id = resource.id();
         self.resources.retain(|(res, _)| res.id() != id);
     }
 
-    fn locate(&self, id: &str) -> Option<&Self::Item> {
+    fn locate(&self, id: &str) -> Option<&Self::Resource> {
         if self.resources.is_empty() {
             return None;
         }
@@ -57,7 +59,7 @@ where
         for (resource, weight) in &self.resources {
             // Rendezvous algorithm: hash(key + node_id) * weight
             let combined_key = format!("{}{}", id, resource.id());
-            let hash_value = self.hasher.hash(combined_key.as_bytes());
+            let hash_value = self.algorithm.hash(combined_key.as_bytes());
 
             // Normalize hash to [0,1] then apply weight using power scaling
             // This uses the weighted rendezvous hashing approach: hash^(1/weight)
@@ -82,7 +84,8 @@ where
     }
 
     fn len(&self) -> usize {
-        // For rendezvous hashing, length equals resource count (no replicas)
+        // For rendezvous hashing, length equals resource count (no replicas).
+        // This is the simplification over the consistent hash.
         self.resources.len()
     }
 
@@ -90,7 +93,7 @@ where
         self.resources.is_empty()
     }
 
-    fn add_weighted(&mut self, resource: Self::Item, weight: f64) {
+    fn add_weighted(&mut self, resource: Self::Resource, weight: f64) {
         let id = resource.id().to_string();
 
         // Remove any existing resource with the same ID first
@@ -100,7 +103,7 @@ where
         self.resources.push((resource, weight));
     }
 
-    fn update_weight(&mut self, resource: &Self::Item, weight: f64) -> Result<(), EndOfLine> {
+    fn update_weight(&mut self, resource: &Self::Resource, weight: f64) -> Result<(), EndOfLine> {
         let id = resource.id();
 
         for (res, current_weight) in &mut self.resources {
@@ -115,7 +118,7 @@ where
 }
 
 impl RendezvousRing {
-    /// Create a new rendezvous hash ring with default hasher
+    /// Create a new rendezvous hash ring with the default hash algorithm
     pub fn new() -> Self {
         Self::default()
     }
@@ -125,22 +128,22 @@ impl<H> RendezvousRing<H>
 where
     H: ConsistentHasher,
 {
-    /// Create a new rendezvous hash ring with a specific hasher
+    /// Create a new rendezvous hash ring with a specific algorithm
     pub fn new_with_hasher(hasher: H) -> Self {
         Self {
             resources: Vec::new(),
-            hasher,
+            algorithm: hasher,
         }
     }
 
-    /// Get the hasher name for diagnostics
-    pub fn hasher_name(&self) -> &'static str {
-        self.hasher.name()
+    /// Get the hash algorithm name for diagnostics
+    pub fn hash_algorithm_name(&self) -> &'static str {
+        self.algorithm.name()
     }
 
     /// Get a raw hash value for testing purposes
     pub fn hash_key(&self, key: &str) -> u64 {
-        self.hasher.hash(key.as_bytes())
+        self.algorithm.hash(key.as_bytes())
     }
 
     /// Get the weight of a resource, if it exists
@@ -390,14 +393,19 @@ mod tests {
         let mut unchanged = 0;
         for (key, original_location) in &initial_mappings {
             if let Some(located) = ring.locate(key)
-                && located.id() == original_location {
-                    unchanged += 1;
-                }
+                && located.id() == original_location
+            {
+                unchanged += 1;
+            }
         }
 
         // Some keys should remain unchanged, but rendezvous hashing redistributes more than consistent hashing
         // With 4 nodes, adding a 5th should cause about 20% redistribution
-        assert!(unchanged > initial_mappings.len() / 2, 
-            "Too much redistribution: {}/{} keys remained unchanged", unchanged, initial_mappings.len());
+        assert!(
+            unchanged > initial_mappings.len() / 2,
+            "Too much redistribution: {}/{} keys remained unchanged",
+            unchanged,
+            initial_mappings.len()
+        );
     }
 }

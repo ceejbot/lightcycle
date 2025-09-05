@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use kolmogorov_smirnov as ks;
 use kolmogorov_smirnov::test::TestResult;
-use lightcycle::hasher::{ConsistentHasher, DefaultHasher};
+use lightcycle::hashes::{ConsistentHasher, DefaultHasher};
 use lightcycle::{ConsistentRing, HasId, HashRing, RendezvousRing};
 
 #[derive(Debug, Clone)]
@@ -271,7 +271,6 @@ fn large_scale_performance() {
         );
     }
 }
-
 
 #[test]
 fn ks_uniform_distribution() {
