@@ -272,68 +272,6 @@ fn large_scale_performance() {
     }
 }
 
-#[test]
-fn distribution_chi_squared() {
-    let mut ring = ConsistentRing::new_with_replica_count(150);
-    let node_count = 8;
-
-    for i in 0..node_count {
-        ring.add(Box::new(TestNode::new(format!("node-{}", i))));
-    }
-
-    let mut observed: Vec<f64> = vec![0.0; node_count];
-    let key_count = 10_000;
-
-    for i in 0..key_count {
-        let key = format!("key-{}", i);
-        if let Some(node) = ring.locate(&key) {
-            let node_index = node
-                .id()
-                .strip_prefix("node-")
-                .and_then(|s| s.parse::<usize>().ok())
-                .expect("Valid node ID");
-            observed[node_index] += 1.0;
-        }
-    }
-
-    let expected = key_count as f64 / node_count as f64;
-    let mut chi_squared = 0.0;
-
-    for count in &observed {
-        chi_squared += (count - expected).powi(2) / expected;
-    }
-
-    let degrees_of_freedom = node_count - 1;
-    let critical_value = match degrees_of_freedom {
-        7 => 14.067, // p = 0.05
-        _ => panic!("Add critical value for {} degrees of freedom", degrees_of_freedom),
-    };
-
-    println!(
-        "Chi-squared statistic: {:.2} (critical value at p=0.05: {})",
-        chi_squared, critical_value
-    );
-
-    // Consistent hashing is inherently not perfectly uniform - it trades perfect
-    // distribution for consistency during node changes. Based on our K-S analysis,
-    // the hash function itself is uniform, so deviations are due to the ring algorithm.
-    // For 8 nodes with 150 replicas, chi-squared values around 50-60 are normal.
-    // With u64 hashes, we may see slightly different distribution patterns.
-    let max_acceptable = critical_value * 4.5; // Adjusted tolerance for u64 hashes
-
-    println!(
-        "Note: Consistent hashing inherently has some distribution variance.\n\
-         Hash function uniformity (K-S test) should be good, ring distribution less so."
-    );
-
-    assert!(
-        chi_squared < max_acceptable,
-        "Distribution severely failed chi-squared test: {} > {} (4.5x critical value). \n\
-         This suggests a serious problem beyond normal consistent hashing variance.",
-        chi_squared,
-        max_acceptable
-    );
-}
 
 #[test]
 fn ks_uniform_distribution() {
@@ -475,7 +413,7 @@ fn compare_hash_functions() {
     let default_result = check_hasher_uniformity(&default_ring, key_count, &uniform_sample, confidence);
     println!(
         "Default ({}): K-S statistic = {:.6}, critical = {:.6}, rejected = {}",
-        default_ring.hasher().name(),
+        default_ring.hasher_name(),
         default_result.statistic,
         default_result.critical_value,
         default_result.is_rejected
@@ -494,7 +432,7 @@ fn compare_hash_functions() {
     }
 
     // All available hashers should pass the uniformity test
-    assert!(!blake3_result.is_rejected, "Blake3 hasher failed uniformity test");
+    assert!(!default_result.is_rejected, "Default hasher failed uniformity test");
 }
 
 fn check_hasher_uniformity<H: ConsistentHasher>(

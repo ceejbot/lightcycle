@@ -190,7 +190,6 @@ pub type DefaultHasher = Blake3Hasher;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     #[cfg(feature = "hash-blake3")]
@@ -219,10 +218,7 @@ mod tests {
     #[test]
     #[cfg(any(
         feature = "hash-blake3",
-        feature = "hash-xxhash",
-        feature = "hash-blake2",
-        feature = "hash-sha2",
-        feature = "hash-fnv"
+        feature = "hash-xxhash"
     ))]
     fn default_hasher() {
         let hasher = DefaultHasher::new();

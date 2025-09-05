@@ -9,7 +9,7 @@
 use lightcycle::hasher::ConsistentHasher;
 use lightcycle::{HashRing, HasId, RendezvousRing};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 struct TestNode {
@@ -226,23 +226,6 @@ fn evaluate_all_hashers() {
         results.push(evaluate_hasher(Murmur3Hasher::new()));
     }
     
-    #[cfg(feature = "hash-blake2")]
-    {
-        use lightcycle::hasher::Blake2Hasher;
-        results.push(evaluate_hasher(Blake2Hasher::new()));
-    }
-    
-    #[cfg(feature = "hash-sha2")]
-    {
-        use lightcycle::hasher::Sha256Hasher;
-        results.push(evaluate_hasher(Sha256Hasher::new()));
-    }
-    
-    #[cfg(feature = "hash-fnv")]
-    {
-        use lightcycle::hasher::FnvHasher;
-        results.push(evaluate_hasher(FnvHasher::new()));
-    }
     
     // Print summary
     println!("\n=== Summary Results ===");
@@ -266,18 +249,18 @@ fn evaluate_all_hashers() {
     println!("\n=== Analysis ===");
     
     let fastest = results.iter().min_by(|a, b| {
-        a.hash_speed_ns.partial_cmp(&b.hash_speed_ns).unwrap()
-    }).unwrap();
+        a.hash_speed_ns.partial_cmp(&b.hash_speed_ns).expect("Hash speed values should be comparable")
+    }).expect("Results should not be empty");
     println!("Fastest hasher: {} ({:.2} ns/op)", fastest.name, fastest.hash_speed_ns);
     
     let best_distribution = results.iter().min_by(|a, b| {
-        a.distribution_chi_squared.partial_cmp(&b.distribution_chi_squared).unwrap()
-    }).unwrap();
+        a.distribution_chi_squared.partial_cmp(&b.distribution_chi_squared).expect("Chi-squared values should be comparable")
+    }).expect("Results should not be empty");
     println!("Best distribution: {} (χ² = {:.2})", best_distribution.name, best_distribution.distribution_chi_squared);
     
     let best_weighted = results.iter().max_by(|a, b| {
-        a.weighted_accuracy.partial_cmp(&b.weighted_accuracy).unwrap()
-    }).unwrap();
+        a.weighted_accuracy.partial_cmp(&b.weighted_accuracy).expect("Weighted accuracy values should be comparable")
+    }).expect("Results should not be empty");
     println!("Best weighted accuracy: {} ({:.1}%)", best_weighted.name, best_weighted.weighted_accuracy);
     
     // Overall recommendation
@@ -294,7 +277,7 @@ fn evaluate_all_hashers() {
         (r.name.clone(), total_score)
     }).collect();
     
-    scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    scores.sort_by(|a, b| a.1.partial_cmp(&b.1).expect("Score values should be comparable"));
     
     println!("Top 3 recommended hashers for rendezvous hashing:");
     for (i, (name, score)) in scores.iter().take(3).enumerate() {
