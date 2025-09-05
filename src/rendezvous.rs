@@ -370,8 +370,8 @@ mod tests {
         let resources = pick_some_fruit();
 
         // Add initial resources
-        for i in 0..3 {
-            ring.add(Box::new(resources[i].clone()));
+        for resource in resources.iter().take(3) {
+            ring.add(Box::new(resource.clone()));
         }
 
         // Map some keys
@@ -389,11 +389,10 @@ mod tests {
         // Check that most keys still map to same resources
         let mut unchanged = 0;
         for (key, original_location) in &initial_mappings {
-            if let Some(located) = ring.locate(key) {
-                if located.id() == original_location {
+            if let Some(located) = ring.locate(key)
+                && located.id() == original_location {
                     unchanged += 1;
                 }
-            }
         }
 
         // Some keys should remain unchanged, but rendezvous hashing redistributes more than consistent hashing
