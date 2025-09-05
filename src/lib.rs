@@ -61,13 +61,20 @@ pub trait HashRing {
     }
 }
 
-use thiserror::Error;
-
 /// We only have two errors, so let's define them right here.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone)]
 pub enum LightCycleError {
-    #[error("Resource {id} not found")]
     NotFound { id: String },
-    #[error("Weight updates not supported by this hash ring implementation")]
     WeightsUnsupported,
+}
+
+impl std::fmt::Display for LightCycleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LightCycleError::NotFound { id } => write!(f, "Resource {id} not found"),
+            LightCycleError::WeightsUnsupported => {
+                write!(f, "Weight updates not supported by this hash ring implementation")
+            }
+        }
+    }
 }

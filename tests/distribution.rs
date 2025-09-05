@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use kolmogorov_smirnov as ks;
 use kolmogorov_smirnov::test::TestResult;
-use lightcycle::hasher::{Blake3Hasher, ConsistentHasher};
+use lightcycle::hasher::{ConsistentHasher, DefaultHasher};
 use lightcycle::{ConsistentRing, HasId, HashRing, RendezvousRing};
 
 #[derive(Debug, Clone)]
@@ -471,11 +471,14 @@ fn compare_hash_functions() {
     // Test Blake3 hasher (default)
     println!("\n=== Hash Function Comparison ===");
 
-    let blake3_ring = ConsistentRing::new_with_hasher(Blake3Hasher::new());
-    let blake3_result = check_hasher_uniformity(&blake3_ring, key_count, &uniform_sample, confidence);
+    let default_ring = ConsistentRing::new_with_hasher(DefaultHasher::new());
+    let default_result = check_hasher_uniformity(&default_ring, key_count, &uniform_sample, confidence);
     println!(
-        "Blake3: K-S statistic = {:.6}, critical = {:.6}, rejected = {}",
-        blake3_result.statistic, blake3_result.critical_value, blake3_result.is_rejected
+        "Default ({}): K-S statistic = {:.6}, critical = {:.6}, rejected = {}",
+        default_ring.hasher().name(),
+        default_result.statistic,
+        default_result.critical_value,
+        default_result.is_rejected
     );
 
     // Test other hashers if available
@@ -487,39 +490,6 @@ fn compare_hash_functions() {
         println!(
             "XXHash: K-S statistic = {:.6}, critical = {:.6}, rejected = {}",
             xxhash_result.statistic, xxhash_result.critical_value, xxhash_result.is_rejected
-        );
-    }
-
-    #[cfg(feature = "hash-blake2")]
-    {
-        use lightcycle::hasher::Blake2Hasher;
-        let blake2_ring = ConsistentRing::new_with_hasher(Blake2Hasher::new());
-        let blake2_result = check_hasher_uniformity(&blake2_ring, key_count, &uniform_sample, confidence);
-        println!(
-            "Blake2: K-S statistic = {:.6}, critical = {:.6}, rejected = {}",
-            blake2_result.statistic, blake2_result.critical_value, blake2_result.is_rejected
-        );
-    }
-
-    #[cfg(feature = "hash-sha2")]
-    {
-        use lightcycle::hasher::Sha256Hasher;
-        let sha256_ring = ConsistentRing::new_with_hasher(Sha256Hasher::new());
-        let sha256_result = check_hasher_uniformity(&sha256_ring, key_count, &uniform_sample, confidence);
-        println!(
-            "SHA256: K-S statistic = {:.6}, critical = {:.6}, rejected = {}",
-            sha256_result.statistic, sha256_result.critical_value, sha256_result.is_rejected
-        );
-    }
-
-    #[cfg(feature = "hash-fnv")]
-    {
-        use lightcycle::hasher::FnvHasher;
-        let fnv_ring = ConsistentRing::new_with_hasher(FnvHasher::new());
-        let fnv_result = check_hasher_uniformity(&fnv_ring, key_count, &uniform_sample, confidence);
-        println!(
-            "FNV: K-S statistic = {:.6}, critical = {:.6}, rejected = {}",
-            fnv_result.statistic, fnv_result.critical_value, fnv_result.is_rejected
         );
     }
 
