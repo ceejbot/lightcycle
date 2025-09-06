@@ -13,114 +13,109 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use anyhow::Result;
 use lightcycle::{ConsistentRing, HasId, HashRing, RendezvousRing};
+use redis::{Client, Commands, Connection, SetExpiry, SetOptions};
+
+const HEALTH_CHECK_INTERVAL_SEC: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct CacheNode {
     id: String,
-    host: String,
-    port: u16,
-    db: u8,
+    uri: String,
     capacity_gb: usize, // Cache capacity in GB for weighted distribution
     healthy: Arc<Mutex<bool>>,
     last_health_check: Arc<Mutex<Instant>>,
     connection_count: Arc<Mutex<usize>>,
-    // a real implementation would hold onto a redis client as well
+    client: Arc<Mutex<Client>>,
 }
 
 #[allow(dead_code)]
 impl CacheNode {
-    fn new(host: impl Into<String>, port: u16, db: u8, capacity_gb: usize) -> Self {
+    fn new(host: impl Into<String>, port: u16, db: u8, capacity_gb: usize) -> Result<Self> {
         let host = host.into();
-        let id = format!("redis://{}:{}/{} ({}GB)", host, port, db, capacity_gb);
-
-        Self {
+        let id = format!("valkey://{host}:{port}/{db} ({capacity_gb}GB)");
+        let uri = format!("valkey://{host}:{port}/{db}");
+        let client = Client::open(uri.as_str())?;
+        Ok(Self {
             id: id.clone(),
-            host,
-            port,
-            db,
+            uri,
             capacity_gb,
             healthy: Arc::new(Mutex::new(true)),
             last_health_check: Arc::new(Mutex::new(Instant::now())),
             connection_count: Arc::new(Mutex::new(0)),
-        }
+            client: Arc::new(Mutex::new(client)),
+        })
     }
 
-    fn check_health(&self) -> bool {
+    fn connection(&self) -> Result<Connection> {
+        // perhaps a little optimistic of us
+        let guard = match self.client.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Ok(guard.get_connection()?) // coaxing the type into anyhow::Error
+    }
+
+    fn incr_count(&self) {
+        let mut count = match self.connection_count.lock() {
+            Ok(v) => v,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *count += 1;
+    }
+
+    fn check_health(&self) -> Result<bool> {
         let mut last_check = self
             .last_health_check
             .lock()
             .expect("poisoned mutex on last health check ts");
 
-        if last_check.elapsed() > Duration::from_secs(5) {
-            // In a real implementation, you would ping the Redis server here
-            // For this example, we'll simulate health checks
+        if last_check.elapsed() > HEALTH_CHECK_INTERVAL_SEC {
+            let mut conn = self.connection()?;
+            let is_healthy = match conn.ping::<String>() {
+                Ok(_v) => true,
+                Err(_) => false,
+            };
             *last_check = Instant::now();
-
-            // Simulate occasional failures (10% chance)
-            let is_healthy = rand::random::<f32>() > 0.1;
             *self.healthy.lock().expect("poisoned mutex on the healthy field") = is_healthy;
-
-            if is_healthy {
-                println!("✓ {} is healthy", self.id);
-            } else {
-                println!("✗ {} is unhealthy", self.id);
-            }
         }
 
-        *self.healthy.lock().expect("poisoned mutex on the healthy field")
+        Ok(*self.healthy.lock().expect("poisoned mutex on the healthy field"))
     }
 
     fn get(&self, key: &str) -> Option<String> {
-        if !self.check_health() {
+        if !self.check_health().ok()? {
             return None;
         }
 
-        *self
-            .connection_count
-            .lock()
-            .expect("poisoned mutex on connection count") += 1;
-
-        // Simulate cache lookup
-        println!("  GET {} from {}", key, self.id);
-
-        // Simulate cache hit/miss (70% hit rate)
-        if rand::random::<f32>() < 0.7 {
-            Some(format!("cached_value_for_{}", key))
-        } else {
-            None
-        }
+        self.incr_count();
+        let mut conn = self.connection().ok()?;
+        let value = conn.get::<&str, String>(key).ok()?;
+        Some(value)
     }
 
-    fn set(&self, key: &str, value: &str, ttl: Duration) -> bool {
-        if !self.check_health() {
-            return false;
+    fn set(&self, key: &str, value: &str, ttl: Duration) -> Result<bool> {
+        if !self.check_health()? {
+            return Ok(false);
         }
 
-        *self
-            .connection_count
-            .lock()
-            .expect("poisoned mutex on connection count") += 1;
-
-        // Simulate cache write
-        println!("  SET {} = {} (TTL: {:?}) to {}", key, value, ttl, self.id);
-        true
+        let mut conn = self.connection()?;
+        let expiration = SetExpiry::EX(ttl.as_secs());
+        let options = SetOptions::default().with_expiration(expiration);
+        let was_set = conn.set_options(key, value, options)?;
+        Ok(was_set)
     }
 
-    fn delete(&self, key: &str) -> bool {
-        if !self.check_health() {
-            return false;
+    fn delete(&self, key: &str) -> Result<bool> {
+        if !self.check_health()? {
+            return Ok(false);
         }
-
-        *self
-            .connection_count
-            .lock()
-            .expect("poisoned mutex on connection count") += 1;
-
-        // Simulate cache delete
-        println!("  DEL {} from {}", key, self.id);
-        true
+        self.incr_count();
+        let mut conn = self.connection()?;
+        let count = conn.del::<&str, usize>(key)?;
+        Ok(count > 0)
     }
 
     fn stats(&self) -> CacheStats {
@@ -195,7 +190,7 @@ impl DistributedCache {
         None
     }
 
-    fn set(&self, key: &str, value: &str, ttl: Duration) -> bool {
+    fn set(&self, key: &str, value: &str, ttl: Duration) -> Result<bool> {
         let ring = self.ring.lock().expect("poisoned mutex");
 
         if let Some(cache_id_box) = ring.locate(key) {
@@ -207,10 +202,10 @@ impl DistributedCache {
                 }
             }
         }
-        false
+        Ok(false)
     }
 
-    fn delete(&self, key: &str) -> bool {
+    fn delete(&self, key: &str) -> Result<bool> {
         let ring = self.ring.lock().expect("poisoned mutex");
 
         if let Some(cache_id_box) = ring.locate(key) {
@@ -222,26 +217,27 @@ impl DistributedCache {
                 }
             }
         }
-        false
+        Ok(false)
     }
 
-    fn rebalance(&mut self) {
+    fn rebalance(&mut self) -> Result<()> {
         println!("\n=== Rebalancing ring based on health ===");
         let mut ring = self.ring.lock().expect("poisoned mutex");
 
         for cache in &self.caches {
-            if !cache.check_health() {
+            if !cache.check_health()? {
                 println!("Removing unhealthy cache: {}", cache.id);
                 ring.remove(cache.id()).ok();
             }
         }
 
         for cache in &self.caches {
-            if cache.check_health() && ring.locate(cache.id()).is_none() {
+            if cache.check_health()? && ring.locate(cache.id()).is_none() {
                 println!("Re-adding healthy cache: {}", cache.id);
                 ring.add(Box::new(cache.clone()));
             }
         }
+        Ok(())
     }
 
     fn stats(&self) -> Vec<CacheStats> {
@@ -249,43 +245,15 @@ impl DistributedCache {
     }
 }
 
-// Simulate random number generation (in real code, use the rand crate)
-mod rand {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[allow(dead_code)]
-    pub fn random<T>() -> T
-    where
-        T: RandomValue,
-    {
-        T::random()
-    }
-
-    #[allow(dead_code)]
-    pub trait RandomValue {
-        fn random() -> Self;
-    }
-
-    impl RandomValue for f32 {
-        fn random() -> Self {
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("should get system time")
-                .subsec_nanos();
-            (nanos % 1000) as f32 / 1000.0
-        }
-    }
-}
-
-fn main() {
+fn main() -> Result<()> {
     println!("=== ConsistentRing vs RendezvousRing Comparison ===\n");
 
     // Create Redis cache instances with different capacities
     let caches = vec![
-        CacheNode::new("localhost", 6379, 0, 1), // 1GB cache
-        CacheNode::new("localhost", 6380, 0, 2), // 2GB cache
-        CacheNode::new("localhost", 6381, 0, 4), // 4GB cache
-        CacheNode::new("localhost", 6382, 0, 8), // 8GB cache
+        CacheNode::new("localhost", 6379, 0, 1)?, // 1GB cache
+        CacheNode::new("localhost", 6380, 0, 2)?, // 2GB cache
+        CacheNode::new("localhost", 6381, 0, 4)?, // 4GB cache
+        CacheNode::new("localhost", 6382, 0, 8)?, // 8GB cache
     ];
 
     demonstrate_consistent_ring(&caches);
@@ -293,6 +261,8 @@ fn main() {
     demonstrate_rendezvous_ring(&caches);
     println!();
     compare_distributions(&caches);
+
+    Ok(())
 }
 
 fn demonstrate_consistent_ring(caches: &[CacheNode]) {
