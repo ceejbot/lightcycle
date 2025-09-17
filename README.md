@@ -6,7 +6,7 @@ Rendezvous hashing is a more general yet simpler-to-implement variation of consi
 
 You may feel free to call these data structures by their more fun names of `LightCycle` and `Recognizer`, or you can be boring and call them `ConsistentRing` and `RendezvousRing`.
 
-I haven't used these in production workloads (yet?), but they are well-tested and have reasonable performance, because that's part of the fun. The crate has very few dependencies:
+I haven't used these in production workloads (yet?), but they are well-tested and have reasonable performance, because that's part of the fun. The crate has very few dependencies: just `thiserror` and whatever hash algorithm you've chosen to use. (The default of murmur3 is generally good enough for most use cases.)
 
 ## Examples
 
