@@ -217,25 +217,25 @@ fn evaluate_algorithms() {
     // Test each available algorithms
     #[cfg(feature = "hash-blake3")]
     {
-        use lightcycle::hasher::Blake3Hasher;
+        use lightcycle::hashes::Blake3Hasher;
         results.push(evaluate_hasher(Blake3Hasher::new()));
     }
 
     #[cfg(feature = "hash-xxhash")]
     {
-        use lightcycle::hasher::XXHasher;
+        use lightcycle::hashes::XXHasher;
         results.push(evaluate_hasher(XXHasher::new()));
     }
 
     #[cfg(feature = "hash-metrohash")]
     {
-        use lightcycle::hasher::MetroHasher;
+        use lightcycle::hashes::MetroHasher;
         results.push(evaluate_hasher(MetroHasher::new()));
     }
 
     #[cfg(feature = "hash-rapidhash")]
     {
-        use lightcycle::hasher::{RapidHashFastHasher, RapidHashQualityHasher};
+        use lightcycle::hashes::{RapidHashFastHasher, RapidHashQualityHasher};
         results.push(evaluate_hasher(RapidHashQualityHasher::new()));
         results.push(evaluate_hasher(RapidHashFastHasher::new()));
     }

@@ -45,4 +45,4 @@ panic = "abort"   # Smaller binary, no unwinding
 [dev-dependencies]
 anyhow = "1.0.99"
 kolmogorov_smirnov = "1.1.0"
-redis = "0.32.5"
+redis = "1.2.1"

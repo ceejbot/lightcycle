@@ -189,6 +189,8 @@ pub type DefaultHasher = Blake3Hasher;
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
+    use super::*;
 
     #[test]
     #[cfg(feature = "hash-blake3")]
