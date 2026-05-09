@@ -254,12 +254,13 @@ fn large_scale_performance() {
             node_count, add_duration, locate_duration
         );
 
-        // String-based hashing is slower than numeric, but still should be reasonable
+        // Lookup is O(log n) via BTreeMap::range. 10k lookups should comfortably
+        // fit in well under a second in debug builds, regardless of ring size.
         let max_duration_ms = match node_count {
-            100 => 3000,   // 3 seconds for 100 nodes
-            500 => 15000,  // 15 seconds for 500 nodes (O(log n) with string comparisons)
-            1000 => 31000, // 31 seconds for 1000 nodes (string comparisons are slow)
-            _ => 31000,
+            100 => 200,
+            500 => 300,
+            1000 => 500,
+            _ => 500,
         };
 
         assert!(
@@ -421,7 +422,7 @@ fn compare_hash_functions() {
     // Test other hashers if available
     #[cfg(feature = "hash-xxhash")]
     {
-        use lightcycle::hasher::XXHasher;
+        use lightcycle::hashes::XXHasher;
         let xxhash_ring = ConsistentRing::new_with_hasher(XXHasher::new());
         let xxhash_result = check_hasher_uniformity(&xxhash_ring, key_count, &uniform_sample, confidence);
         println!(

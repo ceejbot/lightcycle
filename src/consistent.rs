@@ -67,9 +67,8 @@ where
         let hashed_id = self.hasher.hash(id.as_bytes());
 
         // This search is the heart of the consistent hash ring concept.
-        // The data structure we use for the hashring has to be something
-        // that maintains a lexical ordering and lets us do this search.
-        if let Some((_hash, resource_id)) = self.hashring.iter().find(|(k, _v)| *k >= &hashed_id) {
+        // BTreeMap::range gives us an O(log n) seek to the first key >= hashed_id.
+        if let Some((_hash, resource_id)) = self.hashring.range(hashed_id..).next() {
             self.resources.get(resource_id)
         } else if let Some((_hash, resource_id)) = self.hashring.last_key_value() {
             // We're past the end, so we take the last node.
