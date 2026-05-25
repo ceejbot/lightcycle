@@ -1,0 +1,96 @@
+name: "Tests"
+on:
+    push:
+        branches: ["latest"]
+        paths:
+            - src/**
+            - Cargo.toml
+            - .github/workflows/test.yaml
+    pull_request:
+        branches: ["latest"]
+    workflow_dispatch:
+permissions:
+    contents: read
+
+env:
+    CARGO_TERM_COLOR: always
+    SCCACHE_GHA_ENABLED: "true"
+    RUSTC_WRAPPER: "sccache"
+
+jobs:
+    test:
+        name: test (${{ matrix.rust }})
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                rust: [stable, "1.90.0", nightly]
+        steps:
+            - name: checkout
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+              with:
+                persist-credentials: false
+
+            - name: sccache-cache
+              uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696
+
+            - name: Install Rust toolchain
+              uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6
+              with:
+                  toolchain: ${{ matrix.rust }}
+                  components: clippy
+                  cache-directories: |
+                      ~/.cargo/registry
+                      ~/.cargo/bin
+                      target
+
+            - name: consult Clippy
+              run: cargo clippy --all-targets
+
+            - name: Install cargo-nextest and cargo-llvm-cov
+              shell: bash
+              run: |
+                  if [[ -z $(which cargo-nextest) ]]; then
+                    curl -sL https://get.nexte.st/latest/linux -o nextest.tgz
+                    tar xfz nextest.tgz
+                    mv cargo-nextest /home/runner/.cargo/bin
+                  fi
+                  if [[ -z $(which cargo-llvm-cov) ]]; then
+                    curl -sL https://github.com/taiki-e/cargo-llvm-cov/releases/latest/download/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz -o cargo-llvm-cov.tgz
+                    tar xfz cargo-llvm-cov.tgz
+                    mv cargo-llvm-cov /home/runner/.cargo/bin
+                  fi
+
+            - name: run the tests
+              run: cargo nextest run
+
+            - name: Run doctests
+              run: cargo test --doc
+
+            - name: Generate coverage (stable only)
+              if: matrix.rust == 'stable'
+              run: cargo llvm-cov --all-targets --workspace --lcov --output-path lcov.info
+
+            - name: Upload coverage to GitHub (stable only)
+              if: matrix.rust == 'stable'
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: coverage-report
+                  path: lcov.info
+
+    fmt:
+        name: formatting check
+        runs-on: ubuntu-latest
+        steps:
+            - name: checkout
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+              with:
+                persist-credentials: false
+
+            - name: Install nightly Rust
+              uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+              with:
+                  toolchain: nightly
+                  components: rustfmt
+
+            - name: check formatting
+              run: cargo +nightly fmt --check --all
